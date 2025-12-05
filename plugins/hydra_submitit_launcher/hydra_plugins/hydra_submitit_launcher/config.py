@@ -30,6 +30,19 @@ class BaseQueueConf:
 
 
 @dataclass
+class SnapshotConfig:
+    """Configuration for git snapshot functionality."""
+
+    enabled: bool = False
+    branch_prefix: str = "slurm-job"
+    symlink_paths: List[str] = field(
+        default_factory=lambda: ["outputs", "multirun", ".submitit"]
+    )
+    push_to_remote: bool = True
+    worktree_dir: Optional[str] = None  # If None, creates in parent of repo root
+
+
+@dataclass
 class SlurmQueueConf(BaseQueueConf):
     """Slurm configuration overrides and specific parameters"""
 
@@ -76,12 +89,18 @@ class SlurmQueueConf(BaseQueueConf):
     # Any additional arguments that should be passed to srun
     srun_args: Optional[List[str]] = None
 
+    # Git snapshot configuration
+    snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
+
 
 @dataclass
 class LocalQueueConf(BaseQueueConf):
     _target_: str = (
         "hydra_plugins.hydra_submitit_launcher.submitit_launcher.LocalLauncher"
     )
+
+    # Git snapshot configuration (same as SlurmQueueConf)
+    snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
 
 
 # finally, register two different choices:
