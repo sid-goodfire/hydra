@@ -76,7 +76,7 @@ def create_git_snapshot(
         repo_root = get_repo_root()
 
     # Generate timestamped branch name
-    timestamp_utc = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S")
+    timestamp_utc = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
     snapshot_branch = f"{branch_name_prefix}-{timestamp_utc}"
 
     # Create temporary worktree path
