@@ -1,0 +1,43 @@
+defaults:
+  - override hydra/launcher: submitit_local
+
+task: 1
+
+hydra:
+  # Enable debug logging
+  verbose: true
+
+  launcher:
+    # Local launcher parameters
+    timeout_min: 5
+    cpus_per_task: 2
+
+    # Git snapshot configuration
+    snapshot:
+      enabled: true
+      branch_prefix: "local-test"
+      symlink_paths:
+        - "outputs"
+        - "multirun"
+      push_to_remote: false  # Don't push when testing locally
+      worktree_dir: /tmp/hydra-snapshots  # Use /tmp for local testing
+      cleanup_after_job: false  # Set to true to auto-cleanup snapshots after job completes
+
+  # Configure job logging level
+  job_logging:
+    version: 1
+    formatters:
+      simple:
+        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+      file:
+        class: logging.FileHandler
+        formatter: simple
+        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+    root:
+      level: DEBUG
+    disable_existing_loggers: false
