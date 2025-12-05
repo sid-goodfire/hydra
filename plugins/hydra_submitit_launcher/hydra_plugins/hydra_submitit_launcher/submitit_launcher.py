@@ -17,6 +17,7 @@ from hydra.types import HydraContext, TaskFunction
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 from .config import BaseQueueConf
+from .git_snapshot import create_git_snapshot, create_snapshot_worktree, get_repo_root
 
 log = logging.getLogger(__name__)
 
@@ -62,24 +63,85 @@ class BaseSubmititLauncher(Launcher):
         assert self.config is not None
         assert self.task_function is not None
 
-        Singleton.set_state(singleton_state)
-        setup_globals()
-        sweep_config = self.hydra_context.config_loader.load_sweep_config(
-            self.config, sweep_overrides
-        )
+        # Handle git snapshot if enabled
+        original_cwd = None
+        snapshot_workdir = None
+        snapshot_enabled = self.params.get("snapshot", {}).get("enabled", False)
 
-        with open_dict(sweep_config.hydra.job) as job:
-            # Populate new job variables
-            job.id = submitit.JobEnvironment().job_id  # type: ignore
-            sweep_config.hydra.job.num = job_num
+        if snapshot_enabled:
+            try:
+                # Extract snapshot configuration
+                snapshot_config = self.params.get("snapshot", {})
+                branch_prefix = snapshot_config.get("branch_prefix", "slurm-job")
+                symlink_paths = snapshot_config.get("symlink_paths", [])
+                worktree_dir_str = snapshot_config.get("worktree_dir")
+                worktree_dir = Path(worktree_dir_str) if worktree_dir_str else None
 
-        return run_job(
-            hydra_context=self.hydra_context,
-            task_function=self.task_function,
-            config=sweep_config,
-            job_dir_key=job_dir_key,
-            job_subdir_key="hydra.sweep.subdir",
-        )
+                # Get repo root
+                repo_root = get_repo_root()
+
+                # Create snapshot (only once per launch, not per job)
+                # We'll check if snapshot info is already stored
+                if not hasattr(self, "_snapshot_branch"):
+                    log.info(f"Creating git snapshot for job {job_num}...")
+                    self._snapshot_branch, self._snapshot_commit = create_git_snapshot(
+                        branch_prefix, repo_root
+                    )
+                    log.info(
+                        f"Created snapshot branch: {self._snapshot_branch} "
+                        f"(commit: {self._snapshot_commit[:8]})"
+                    )
+
+                # Create worktree for this specific job
+                log.info(f"Creating snapshot worktree for job {job_num}...")
+                snapshot_workdir = create_snapshot_worktree(
+                    self._snapshot_branch, symlink_paths, repo_root, worktree_dir
+                )
+
+                # Change to snapshot directory
+                original_cwd = Path.cwd()
+                os.chdir(snapshot_workdir)
+                log.info(f"Changed working directory to snapshot: {snapshot_workdir}")
+
+            except Exception as e:
+                log.error(f"Failed to create snapshot: {e}")
+                # Fall back to running without snapshot
+                if original_cwd and snapshot_workdir:
+                    try:
+                        os.chdir(original_cwd)
+                    except Exception:
+                        pass
+
+        try:
+            Singleton.set_state(singleton_state)
+            setup_globals()
+            sweep_config = self.hydra_context.config_loader.load_sweep_config(
+                self.config, sweep_overrides
+            )
+
+            with open_dict(sweep_config.hydra.job) as job:
+                # Populate new job variables
+                job.id = submitit.JobEnvironment().job_id  # type: ignore
+                sweep_config.hydra.job.num = job_num
+
+            result = run_job(
+                hydra_context=self.hydra_context,
+                task_function=self.task_function,
+                config=sweep_config,
+                job_dir_key=job_dir_key,
+                job_subdir_key="hydra.sweep.subdir",
+            )
+
+            return result
+
+        finally:
+            # Restore original working directory
+            if original_cwd is not None:
+                try:
+                    os.chdir(original_cwd)
+                    log.debug(f"Restored working directory to: {original_cwd}")
+                except Exception as e:
+                    log.warning(f"Failed to restore working directory: {e}")
 
     def checkpoint(self, *args: Any, **kwargs: Any) -> Any:
         """Resubmit the current callable at its current state with the same initial arguments."""
