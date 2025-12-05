@@ -17,6 +17,7 @@ from hydra.types import HydraContext, TaskFunction
 from omegaconf import DictConfig, OmegaConf, open_dict
 
 from .config import BaseQueueConf
+from .git_snapshot import create_git_snapshot, create_snapshot_worktree, get_repo_root
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +26,13 @@ class BaseSubmititLauncher(Launcher):
     _EXECUTOR = "abstract"
 
     def __init__(self, **params: Any) -> None:
+        # Extract snapshot config separately before storing params
+        snapshot_config = params.pop("snapshot", {})
+        if OmegaConf.is_config(snapshot_config):
+            snapshot_config = OmegaConf.to_container(snapshot_config, resolve=True)
+        self.snapshot_config = snapshot_config
+
+        # Store remaining params for submitit
         self.params = {}
         for k, v in params.items():
             if OmegaConf.is_config(v):
@@ -62,24 +70,102 @@ class BaseSubmititLauncher(Launcher):
         assert self.config is not None
         assert self.task_function is not None
 
-        Singleton.set_state(singleton_state)
-        setup_globals()
-        sweep_config = self.hydra_context.config_loader.load_sweep_config(
-            self.config, sweep_overrides
-        )
+        # Handle git snapshot if enabled
+        original_cwd = None
+        snapshot_workdir = None
+        snapshot_enabled = self.snapshot_config.get("enabled", False)
 
-        with open_dict(sweep_config.hydra.job) as job:
-            # Populate new job variables
-            job.id = submitit.JobEnvironment().job_id  # type: ignore
-            sweep_config.hydra.job.num = job_num
+        if snapshot_enabled:
+            try:
+                # Extract snapshot configuration
+                branch_prefix = self.snapshot_config.get("branch_prefix", "slurm-job")
+                symlink_paths = self.snapshot_config.get("symlink_paths", [])
+                worktree_dir_str = self.snapshot_config.get("worktree_dir")
+                worktree_dir = Path(worktree_dir_str) if worktree_dir_str else None
 
-        return run_job(
-            hydra_context=self.hydra_context,
-            task_function=self.task_function,
-            config=sweep_config,
-            job_dir_key=job_dir_key,
-            job_subdir_key="hydra.sweep.subdir",
-        )
+                # Get repo root
+                repo_root = get_repo_root()
+
+                # Create snapshot (only once per launch, not per job)
+                # We'll check if snapshot info is already stored
+                if not hasattr(self, "_snapshot_branch"):
+                    log.debug(f"Creating git snapshot for job {job_num}...")
+                    self._snapshot_branch, self._snapshot_commit = create_git_snapshot(
+                        branch_prefix, repo_root
+                    )
+                    log.debug(
+                        f"Created snapshot branch: {self._snapshot_branch} "
+                        f"(commit: {self._snapshot_commit[:8]})"
+                    )
+
+                # Create worktree for this specific job
+                log.debug(f"Creating snapshot worktree for job {job_num}...")
+                snapshot_workdir = create_snapshot_worktree(
+                    self._snapshot_branch, symlink_paths, repo_root, worktree_dir
+                )
+
+                # Change to snapshot directory
+                original_cwd = Path.cwd()
+                os.chdir(snapshot_workdir)
+                log.debug(f"Changed working directory to snapshot: {snapshot_workdir}")
+
+            except Exception as e:
+                log.error(f"Failed to create snapshot: {e}")
+                # Fall back to running without snapshot
+                if original_cwd and snapshot_workdir:
+                    try:
+                        os.chdir(original_cwd)
+                    except Exception:
+                        pass
+
+        try:
+            Singleton.set_state(singleton_state)
+            setup_globals()
+            sweep_config = self.hydra_context.config_loader.load_sweep_config(
+                self.config, sweep_overrides
+            )
+
+            with open_dict(sweep_config.hydra.job) as job:
+                # Populate new job variables
+                job.id = submitit.JobEnvironment().job_id  # type: ignore
+                sweep_config.hydra.job.num = job_num
+
+                # If snapshot is enabled, prevent Hydra from changing directory
+                # We've already changed to the snapshot directory
+                if snapshot_enabled:
+                    job.chdir = False
+
+            result = run_job(
+                hydra_context=self.hydra_context,
+                task_function=self.task_function,
+                config=sweep_config,
+                job_dir_key=job_dir_key,
+                job_subdir_key="hydra.sweep.subdir",
+            )
+
+            return result
+
+        finally:
+            # Restore original working directory
+            if original_cwd is not None:
+                try:
+                    os.chdir(original_cwd)
+                    log.debug(f"Restored working directory to: {original_cwd}")
+                except Exception as e:
+                    log.warning(f"Failed to restore working directory: {e}")
+
+            # Cleanup snapshot worktree if configured
+            if snapshot_enabled and snapshot_workdir is not None:
+                cleanup_enabled = self.snapshot_config.get("cleanup_after_job", False)
+                if cleanup_enabled:
+                    try:
+                        from .git_snapshot import cleanup_snapshot_worktree
+
+                        log.debug(f"Cleaning up snapshot worktree: {snapshot_workdir}")
+                        cleanup_snapshot_worktree(snapshot_workdir)
+                        log.debug("Snapshot worktree cleaned up successfully")
+                    except Exception as e:
+                        log.warning(f"Failed to cleanup snapshot worktree: {e}")
 
     def checkpoint(self, *args: Any, **kwargs: Any) -> Any:
         """Resubmit the current callable at its current state with the same initial arguments."""
