@@ -21,5 +21,6 @@ hydra:
         - "outputs"
         - "multirun"
         - ".submitit"
-      push_to_remote: true
+      push_to_remote: false
+      cleanup_after_job: false
       worktree_dir: null  # null = parent dir of repo, or specify path like "/tmp/snapshots"
