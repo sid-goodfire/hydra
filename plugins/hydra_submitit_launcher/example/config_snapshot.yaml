@@ -1,0 +1,24 @@
+defaults:
+  - override hydra/launcher: submitit_slurm
+
+task: 1
+
+hydra:
+  launcher:
+    # Standard Slurm parameters
+    timeout_min: 60
+    cpus_per_task: 4
+    gpus_per_node: 1
+    nodes: 1
+    tasks_per_node: 1
+    mem_gb: 16
+
+    # Git snapshot configuration
+    snapshot:
+      enabled: true
+      branch_prefix: "slurm-job"
+      symlink_paths:
+        - "outputs"
+        - "multirun"
+        - ".submitit"
+      push_to_remote: true

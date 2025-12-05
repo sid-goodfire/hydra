@@ -30,6 +30,18 @@ class BaseQueueConf:
 
 
 @dataclass
+class SnapshotConfig:
+    """Configuration for git snapshot functionality."""
+
+    enabled: bool = False
+    branch_prefix: str = "slurm-job"
+    symlink_paths: List[str] = field(
+        default_factory=lambda: ["outputs", "multirun", ".submitit"]
+    )
+    push_to_remote: bool = True
+
+
+@dataclass
 class SlurmQueueConf(BaseQueueConf):
     """Slurm configuration overrides and specific parameters"""
 
@@ -75,6 +87,9 @@ class SlurmQueueConf(BaseQueueConf):
     setup: Optional[List[str]] = None
     # Any additional arguments that should be passed to srun
     srun_args: Optional[List[str]] = None
+
+    # Git snapshot configuration
+    snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
 
 
 @dataclass
