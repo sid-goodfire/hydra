@@ -2,3 +2,8 @@ defaults:
   - override hydra/launcher: submitit_slurm
 
 task: 1
+
+hydra:
+  job:
+    env_set:
+      LOG_LEVEL: DEBUG

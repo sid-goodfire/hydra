@@ -34,6 +34,7 @@ from hydra.errors import HydraException
 from hydra.plugins.launcher import Launcher
 from hydra.plugins.sweeper import Sweeper
 from hydra.types import HydraContext, TaskFunction
+from hydra.core.utils import JobStatus
 
 
 @dataclass
@@ -178,7 +179,9 @@ class BasicSweeper(Sweeper):
 
             for r in results:
                 # access the result to trigger an exception in case the job failed.
-                _ = r.return_value
+                # Skip for UNKNOWN status (async launchers like submitit)
+                if r.status != JobStatus.UNKNOWN:
+                    _ = r.return_value
 
             initial_job_idx += len(batch)
             returns.append(results)
