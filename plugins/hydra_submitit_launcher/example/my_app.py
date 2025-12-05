@@ -14,6 +14,9 @@ log = logging.getLogger(__name__)
 def my_app(cfg: DictConfig) -> None:
     env = submitit.JobEnvironment()
     log.info(f"Process ID {os.getpid()} executing task {cfg.task}, with {env}")
+
+    log.info(f"Snapshot branch: {cfg.snapshot.branch}")
+    log.info(f"Snapshot commit: {cfg.snapshot.commit}")
     time.sleep(1)
 
 
