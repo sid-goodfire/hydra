@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from hydra.core.singleton import Singleton
-from hydra.core.utils import JobReturn, filter_overrides, run_job, setup_globals
+from hydra.core.utils import (
+    JobReturn,
+    JobStatus,
+    filter_overrides,
+    run_job,
+    setup_globals,
+)
 from hydra.plugins.launcher import Launcher
 from hydra.types import HydraContext, TaskFunction
 from omegaconf import DictConfig, OmegaConf, open_dict
@@ -142,7 +148,13 @@ class BaseSubmititLauncher(Launcher):
             )
 
         jobs = executor.map_array(self, *zip(*job_params))
-        return [j.results()[0] for j in jobs]
+        job_ids = [j.job_id for j in jobs]
+        log.info(f"Submitted {len(jobs)} jobs: {job_ids}")
+        log.info("Jobs submitted asynchronously. Exiting without waiting for results.")
+        return [
+            JobReturn(overrides=list(overrides), status=JobStatus.UNKNOWN)
+            for overrides in job_overrides
+        ]
 
 
 class LocalLauncher(BaseSubmititLauncher):
